@@ -59,6 +59,11 @@ module Bud
     define_collection(name)
     @tables[name] = Bud::BudTable.new(name, self, schema)
   end
+  
+  def sqltable(name, schema=nil)
+    define_collection(name)
+    @tables[name] = Bud::BudSQLTable.new(name, self, schema)
+  end
 
   # declare a collection-generating expression.  default schema <tt>[:key] => [:val]</tt>.
   def coll_expr(name, expr, schema=nil)

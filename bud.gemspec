@@ -26,6 +26,7 @@ Gem::Specification.new do |s|
   s.add_dependency 'superators19'
   s.add_dependency 'syntax'
   s.add_dependency 'uuid'
+  s.add_dependency 'pg'
 
   s.add_development_dependency 'minitest'
 

@@ -10,6 +10,7 @@ require 'set'
 require 'socket'
 require 'superators19'
 require 'thread'
+require 'pg'
 
 require 'bud/errors'
 require 'bud/monkeypatch'
@@ -76,6 +77,7 @@ module Bud
   attr_accessor :metrics, :periodics
   attr_accessor :this_rule_context, :qualified_name
   attr_reader :running_async
+  attr_reader :pg_connection
 
   # options to the Bud runtime are passed in a hash, with the following keys
   # * network configuration
@@ -171,6 +173,10 @@ module Bud
       @push_sources = @num_strata.times.map{{}}
       @push_joins = @num_strata.times.map{[]}
       @merge_targets = @num_strata.times.map{Set.new}
+    end
+    
+    if @options[:pg_host] && @options[:pg_dbname]
+      @pg_connection = PG.connect( :host => @options[:pg_host], :dbname => @options[:pg_dbname] )
     end
   end
 

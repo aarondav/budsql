@@ -1216,6 +1216,23 @@ module Bud
       raise Bud::Error, "abstract method not implemented by derived class #{self.class}"
     end
   end
+  
+  class BudSQLTable < BudPersistentCollection
+    def initialize(name, bud_instance, given_schema)
+      super(name, bud_instance, given_schema)
+    end
+    
+    public
+    def tick
+      # reload everything from SQL table
+    end
+    
+    def invalidated=(val)
+       # Might be reset to false at end-of-tick, but shouldn't be set to true
+       raise Bud::Error, "cannot not set invalidate on table '#{@tabname}'" if val
+       super
+    end
+  end
 
   class BudTable < BudPersistentCollection # :nodoc: all
     def initialize(name, bud_instance, given_schema) # :nodoc: all
