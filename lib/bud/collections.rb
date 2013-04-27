@@ -1224,7 +1224,19 @@ module Bud
     
     public
     def tick
+      puts "*"*50
       # reload everything from SQL table
+      @storage = {}
+      bud_instance.pg_connection.exec("select * from #{@tabname}") do |results|
+        results.each do |row|
+          vals = []
+          @given_schema.each do |col|
+            vals << row[col.to_s]
+          end
+          merge_to_buf(@delta, vals, vals, @storage[vals])
+          # @storage[vals] = vals
+        end
+      end
     end
     
     def invalidated=(val)
@@ -1243,6 +1255,8 @@ module Bud
 
     public
     def tick #:nodoc: all
+      puts "*"*50
+      puts "storage: #{@storage}"
       if $BUD_DEBUG
         puts "#{tabname}.storage -= pending deletes" unless @to_delete.empty? and @to_delete_by_key.empty?
         puts "#{tabname}.delta += pending" unless @pending.empty?
@@ -1265,6 +1279,8 @@ module Bud
       puts "table #{qualified_tabname} invalidated" if $BUD_DEBUG and @invalidated
 
       @pending.each do |key, tup|
+        puts "key: #{key}"
+        puts "tup: #{tup}"
         merge_to_buf(@delta, key, tup, @storage[key])
       end
       @to_delete = []
