@@ -88,7 +88,7 @@ module Bud
         key_cols = given_schema.keys.first
         val_cols = given_schema.values.first
       else
-        key_cols = given_schema
+        key_cols = given_schema.map { |i| i.is_a?(Array) ? i[1] : i }
         val_cols = []
       end
 
@@ -1224,14 +1224,24 @@ module Bud
     
     public
     def tick
-      puts "*"*50
+      puts "&"*50
       # reload everything from SQL table
-      @storage = {}
-      bud_instance.pg_connection.exec("select * from #{@tabname}") do |results|
+      
+      schema_row = @given_schema.map { |e| e[1] }.join(',')
+      @pending.each do |key, tup|
+        values= []
+        (0..(tup.size-1)).each do |i|
+          values << convertToSQL(tup[i], @given_schema[i][0])
+        end
+        values = values.join(",")
+        bud_instance.pg_connection.exec("INSERT INTO #{@tabname} (#{schema_row}) VALUES (#{values})")
+      end
+
+      bud_instance.pg_connection.exec("SELECT * FROM #{@tabname}") do |results|
         results.each do |row|
           vals = []
-          @given_schema.each do |col|
-            vals << row[col.to_s]
+          @given_schema.each do |type, col|
+            vals << convertFromSQL(row[col.to_s], type)
           end
           merge_to_buf(@delta, vals, vals, @storage[vals])
           # @storage[vals] = vals
@@ -1243,6 +1253,29 @@ module Bud
        # Might be reset to false at end-of-tick, but shouldn't be set to true
        raise Bud::Error, "cannot not set invalidate on table '#{@tabname}'" if val
        super
+    end
+    
+    private
+    def convertFromSQL(val, type)
+      case type
+      when :string
+        return val.to_s
+      when :bool
+        return val == "t"
+      when :int
+        return val.to_i
+      end
+    end
+    
+    def convertToSQL(val, type)
+      case type
+      when :string
+        return "'" + val.to_s + "'"
+      when :bool
+        return val ? "'t'" : "'f'"
+      when :int
+        return val.to_i
+      end
     end
   end
 

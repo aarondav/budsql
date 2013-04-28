@@ -60,6 +60,18 @@ module Bud
     @tables[name] = Bud::BudTable.new(name, self, schema)
   end
   
+  def string(name)
+    [:string, name]
+  end
+
+  def int(name)
+    [:int, name]
+  end
+
+  def bool(name)
+    [:bool, name]
+  end
+  
   def sqltable(name, schema=nil)
     define_collection(name)
     @tables[name] = Bud::BudSQLTable.new(name, self, schema)
