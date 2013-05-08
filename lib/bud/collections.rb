@@ -1218,31 +1218,93 @@ module Bud
     end
   end
   
+  # TODO: maybe refactor to anon classes
+  class SQLJoin
+    def initialize(collections, bud_instance)
+      @collections = collections
+      @col_names = collections.map { |c| c.tabname }
+      @bud_instance = bud_instance
+    end
+    
+    def pairs(*preds, &blk)
+      pred_string = preds[0].map { |j,k| @col_names[0].to_s + "." + j.to_s + " = " + @col_names[1].to_s + "." + k.to_s }.join(" AND ") rescue ""
+      pred_string = "WHERE " + pred_string unless pred_string == ""
+      select_clause = @collections.map { |c| c.cols.map { |col| c.tabname.to_s + "." + col.to_s + " AS " + c.tabname.to_s + "_" + col.to_s }.join(",") }.join(",")
+      puts select_clause
+      @bud_instance.pg_connection.exec("SELECT #{select_clause} FROM #{@col_names.join(',')} #{pred_string}") do |results|
+        results.each do |row|
+          puts row
+        end
+      end
+    end
+  end
+  
   class BudSQLTable < BudPersistentCollection
     def initialize(name, bud_instance, given_schema)
       super(name, bud_instance, given_schema)
+      @to_delete = []
     end
     
     public
+    
+    def pending_delete(o)
+      if o.class <= Bud::PushElement
+        add_merge_target
+        o.wire_to(self, :delete)
+      elsif o.class <= Bud::BudCollection
+        add_merge_target
+        o.pro.wire_to(self, :delete)
+      elsif o.class <= Proc
+        add_merge_target
+        tbl = register_coll_expr(o)
+        tbl.pro.wire_to(self, :delete)
+      elsif o.class <= Bud::LatticePushElement
+        add_merge_target
+        o.wire_to(self, :delete)
+      elsif o.class <= Bud::LatticeWrapper
+        add_merge_target
+        o.to_push_elem.wire_to(self, :delete)
+      else
+        unless o.nil?
+          o = o.uniq.compact if o.respond_to?(:uniq)
+          check_enumerable(o)
+          establish_schema(o) if @cols.nil?
+          o.each{|i| @to_delete << prep_tuple(i)}
+        end
+      end
+    end
+    superator "<-" do |o|
+      pending_delete(o)
+    end
+    
+    def *(collection)
+      SQLJoin.new([self, collection], bud_instance)
+    end
+    
     def accumulate_tick_deltas
       true
     end
     
     def tick
       
-      schema_row = @given_schema.map { |e| e[1] }.join(',')
-      # puts "^"*50
-      # puts @tick_delta
+      # Instantaneous merges
       tick_d = {}
       @tick_delta.each { |td| tick_d[td] = td }
-      tick_d.merge(@pending).each do |key, tup|
-        values= []
+      
+      merge_to_sql(tick_d)
+      
+      # Delayed deletions
+      @to_delete.each do |tup|
+        delete_clause = []
         (0..(tup.size-1)).each do |i|
-          values << convertToSQL(tup[i], @given_schema[i][0])
+          delete_clause << @given_schema[i][1].to_s + " = " + convertToSQL(tup[i], @given_schema[i][0]).to_s
         end
-        values = values.join(",")
-        bud_instance.pg_connection.exec("INSERT INTO #{@tabname} (#{schema_row}) VALUES (#{values})") rescue nil
+        bud_instance.pg_connection.exec("DELETE FROM #{@tabname} WHERE #{delete_clause.join(" AND ")}")
       end
+      puts "in tick: #{@to_delete}"
+      
+      # Delayed merges
+      merge_to_sql(@pending)
 
       bud_instance.pg_connection.exec("SELECT * FROM #{@tabname}") do |results|
         results.each do |row|
@@ -1259,6 +1321,18 @@ module Bud
       @tick_delta.clear
     end
     
+    def merge_to_sql(vals)
+      schema_row = @given_schema.map { |e| e[1] }.join(',')
+      vals.each do |key, tup|
+        values= []
+        (0..(tup.size-1)).each do |i|
+          values << convertToSQL(tup[i], @given_schema[i][0])
+        end
+        values = values.join(",")
+        bud_instance.pg_connection.exec("INSERT INTO #{@tabname} (#{schema_row}) VALUES (#{values})") rescue nil
+      end
+    end
+    
     def invalidated=(val)
        # Might be reset to false at end-of-tick, but shouldn't be set to true
        raise Bud::Error, "cannot not set invalidate on table '#{@tabname}'" if val
@@ -1266,6 +1340,7 @@ module Bud
     end
     
     private
+    
     def convertFromSQL(val, type)
       case type
       when :string
@@ -1340,6 +1415,7 @@ module Bud
         add_merge_target
         o.wire_to(self, :delete)
       elsif o.class <= Bud::BudCollection
+        puts "it's a bud collection"
         add_merge_target
         o.pro.wire_to(self, :delete)
       elsif o.class <= Proc
