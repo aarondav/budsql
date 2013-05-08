@@ -467,6 +467,7 @@ module Bud
     # construct and return a merged tuple by using lattice merge functions.
     private
     def merge_to_buf(buf, key, tup, old)
+      puts "merge_to_buf being called with key #{key}"
       if old.nil?               # no matching tuple found
         buf[key] = tup
         return
@@ -1223,18 +1224,24 @@ module Bud
     end
     
     public
+    def accumulate_tick_deltas
+      true
+    end
+    
     def tick
-      puts "&"*50
-      # reload everything from SQL table
       
       schema_row = @given_schema.map { |e| e[1] }.join(',')
-      @pending.each do |key, tup|
+      # puts "^"*50
+      # puts @tick_delta
+      tick_d = {}
+      @tick_delta.each { |td| tick_d[td] = td }
+      tick_d.merge(@pending).each do |key, tup|
         values= []
         (0..(tup.size-1)).each do |i|
           values << convertToSQL(tup[i], @given_schema[i][0])
         end
         values = values.join(",")
-        bud_instance.pg_connection.exec("INSERT INTO #{@tabname} (#{schema_row}) VALUES (#{values})")
+        bud_instance.pg_connection.exec("INSERT INTO #{@tabname} (#{schema_row}) VALUES (#{values})") rescue nil
       end
 
       bud_instance.pg_connection.exec("SELECT * FROM #{@tabname}") do |results|
@@ -1247,6 +1254,9 @@ module Bud
           # @storage[vals] = vals
         end
       end
+      
+      @pending = {}
+      @tick_delta.clear
     end
     
     def invalidated=(val)
@@ -1288,8 +1298,6 @@ module Bud
 
     public
     def tick #:nodoc: all
-      puts "*"*50
-      puts "storage: #{@storage}"
       if $BUD_DEBUG
         puts "#{tabname}.storage -= pending deletes" unless @to_delete.empty? and @to_delete_by_key.empty?
         puts "#{tabname}.delta += pending" unless @pending.empty?
