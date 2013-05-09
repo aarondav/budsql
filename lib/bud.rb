@@ -160,6 +160,11 @@ module Bud
     resolve_imports
     call_state_methods
 
+    # Connect to databse (currently postgres)
+    if @options[:pg_host] && @options[:pg_dbname]
+      @pg_connection = PG.connect( :host => @options[:pg_host], :dbname => @options[:pg_dbname] )
+    end
+    
     @declarations = self.class.instance_methods.select {|m| m =~ /^__bloom__.+$/}.map {|m| m.to_s}
 
     @viz = VizOnline.new(self) if @options[:trace]
@@ -173,10 +178,6 @@ module Bud
       @push_sources = @num_strata.times.map{{}}
       @push_joins = @num_strata.times.map{[]}
       @merge_targets = @num_strata.times.map{Set.new}
-    end
-    
-    if @options[:pg_host] && @options[:pg_dbname]
-      @pg_connection = PG.connect( :host => @options[:pg_host], :dbname => @options[:pg_dbname] )
     end
   end
 
