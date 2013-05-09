@@ -32,22 +32,22 @@ class ShortestPaths
 end
 
 # compute shortest paths.
-program = ShortestPaths.new
+program = ShortestPaths.new(:dump_rewrite => true)
 
 # populate our little example.  we put two links between 'a' and 'b'
 # to see whether our shortest-paths code does the right thing.
-program.link <= [['a', 'b', 1],
+program.link <+ [['a', 'b', 1],
                  ['a', 'b', 4],
                  ['b', 'c', 1],
                  ['c', 'd', 1],
                  ['d', 'e', 1]]
 
 program.tick # one timestamp is enough for this simple program
-program.shortest.to_a.sort.each {|t| puts t.inspect}
+#program.shortest.to_a.sort.each {|t| puts t.inspect}
 
 puts "----"
 
 # now lets add an extra link and recompute
 program.link << ['e', 'f', 1]
 program.tick
-program.shortest.to_a.sort.each {|t| puts t.inspect}
+#program.shortest.to_a.sort.each {|t| puts t.inspect}
