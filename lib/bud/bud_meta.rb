@@ -116,6 +116,7 @@ class BudMeta #:nodoc: all
   
   def create_sql_views(sql_views_to_be_created)
     sql_views_to_be_created.each do |table, statements|
+      puts "HELLO HOW ARE YOU DOING TODAY THIS FINE EVENING"
       states = statements.collect { |s| "(" + s + ")" }
       @bud_instance.pg_connection.exec("CREATE VIEW #{table.to_s + '_view'} AS " + states.join(" UNION "))
     end

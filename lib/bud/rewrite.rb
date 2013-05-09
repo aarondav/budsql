@@ -454,6 +454,11 @@ class SQLRewriter < SexpProcessor
     puts "Hello: #{exp}"
     ret = s(tag, process(recv), op, *(args.map{|a| process(a)}))
 
+    if recv == nil and op.is_a? Symbol and  @join_info.tables.size == 0 # hack!
+      @join_info.tables << op
+      @join_info.columns = @bud_instance.tables[op].cols
+    end
+
     if op == :*
       @join_info.prependTable(args[0][2])  # right
       @join_info.prependTable(recv[2]) unless recv[2] == :* # left
