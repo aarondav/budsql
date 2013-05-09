@@ -263,6 +263,11 @@ class RuleRewriter < Ruby2Ruby # :nodoc: all
     ufr = UnsafeFuncRewriter.new(@bud_instance)
     rhs_ast = ufr.process(rhs_ast)
 
+    sqlr = SQLRewriter.new(@bud_instance)
+    rhs_ast = sqlr.process(rhs_ast)
+    # TODO: Post-proces
+    sql = sqlr.join_info
+    
     if @bud_instance.options[:no_attr_rewrite]
       rhs = collect_rhs(rhs_ast)
       rhs_pos = rhs
@@ -274,6 +279,7 @@ class RuleRewriter < Ruby2Ruby # :nodoc: all
       reset_instance_vars
       rhs_pos = collect_rhs(AttrNameRewriter.new(@bud_instance).process(rhs_ast_dup))
     end
+
     record_rule(lhs, op, rhs_pos, rhs, ufr.unsafe_func_called)
     drain(exp)
   end
@@ -397,6 +403,161 @@ class UnsafeFuncRewriter < SexpProcessor
   end
 end
 
+
+class SQLRewriter < SexpProcessor
+  attr_accessor :join_info
+
+  class JoinInfo
+    attr_accessor :tables, :columns, :predicate, :block_aliases
+    def initialize(bud_instance)
+      @tables = []
+      @columns = []
+      @predicate = ""
+      @bud_instance = bud_instance
+      @block_aliases = {}
+    end
+
+    def prependTable(table)
+      @tables.unshift table
+    end
+
+    def to_s
+      sql = "SELECT #{@columns.join(",")} FROM #{@tables.join(",")}"
+      unless @predicate == ""
+        sql += " WHERE #{@predicate}"
+      end
+      sql
+    end
+  end
+
+  def initialize(bud_instance)
+    super()
+    self.require_empty = false
+    self.expected = Sexp
+    @bud_instance = bud_instance
+    @elem_stack = []
+    @join_info = JoinInfo.new(bud_instance)
+  end
+
+  def process_call(exp)
+    tag, recv, op, *args = exp
+
+    puts "Hello: #{exp}"
+    ret = s(tag, process(recv), op, *(args.map{|a| process(a)}))
+
+    if op == :*
+      @join_info.prependTable(args[0][2])  # right
+      @join_info.prependTable(recv[2]) unless recv[2] == :* # left
+    end
+
+    if op == :pairs
+      @join_info.tables.each do |table|
+        @bud_instance.tables[table].cols.each do |c|
+          @join_info.columns << "#{table}.#{c}"
+        end
+      end
+    elsif op == :lefts
+      @bud_instance.tables[@join_info.tables[0]].cols.each do |c|
+        @join_info.columns << "#{table}.#{c}"
+      end
+    elsif op == :rights
+      @bud_instance.tables[@join_info.tables[1]].cols.each do |c|
+        @join_info.columns << "#{table}.#{c}"
+      end
+    end
+
+    return ret 
+  end
+
+  def process_iter(exp)
+    tag, recv, iter_args, body = exp
+#    new_body = 
+#    puts "Yo, in iter: #{exp} / #{body} / #{new_body}"
+    
+    ret = s(tag, process(recv), process(iter_args), push_and_process(body))
+
+    numSqlTables = 0
+    @join_info.tables.each do |t|
+      if @bud_instance.tables[t].is_a? Bud::BudSQLTable
+        numSqlTables += 1
+      end
+    end
+
+    if numSqlTables == 0
+      @join_info.tables = []
+      @join_info.columns = []
+    elsif numSqlTables != @join_info.tables.size
+      throw BudError("All tables on right hand side must be sql IFF at least one is a sql table")
+    end
+
+    return ret
+  end
+
+  def process_args(exp)
+    tag, *args = exp
+
+    puts "Args: #{exp}"
+    ret = s(tag, *args)
+
+    (0..args.size-1).each do |i|
+      @join_info.block_aliases[args[i].to_s] = @join_info.tables[i]
+    end
+
+    return ret
+  end
+
+  def process_if(exp)
+    tag, pred, blk, nothing = exp
+#    ret = 
+
+    parser = RubyParser.new
+    r2r = Ruby2Ruby.new
+    sql_pred = r2r.process(pred)
+    pred = parser.process(sql_pred)
+    puts "If: #{exp} / #{pred} / #{blk}"
+    sql_pred.gsub!("==", "=")
+    sql_pred.gsub!('"', "'")
+
+    @join_info.block_aliases.each do |balias, table|
+      sql_pred.gsub!("#{balias}.", "#{table}.")
+    end
+
+    @join_info.predicate = sql_pred
+    
+    return s(tag, process(pred), process(blk), nothing)
+  end
+
+  def process_array(exp)
+    tag, *args = exp
+    puts "Array: #{exp}"
+
+    if (@join_info.tables.size > 0)
+      @join_info.columns = []
+      args.each do |arg|
+        tab = @join_info.block_aliases[arg[1][1].to_s]
+        col = arg[2]
+        @join_info.columns << "#{tab}.#{col}"
+        puts "Adding #{@join_info.block_aliases} / #{arg[1]} / #{tab}.#{col}"
+      end
+    end
+
+    return s(tag, *(args.map{|a| process(a)}))
+  end
+
+  def push_and_process(exp)
+    obj_id = exp.object_id
+    @elem_stack.push(obj_id)
+    rv = process(exp)
+    raise Bud::Error unless @elem_stack.pop == obj_id
+    return rv
+  end
+
+  def is_collection_name?(op)
+    @bud_instance.tables.has_key?(op.to_sym) || @bud_instance.lattices.has_key?(op.to_sym)
+  end
+end
+
+
 # Rewrite references to lattice identifiers that appear in rule bodies. A
 # reference to a lattice identifier returns the associated lattice wrapper. When
 # the identifier appears at the top-level of the rule RHS, that is fine (since
@@ -465,6 +626,7 @@ class AttrNameRewriter < SexpProcessor # :nodoc: all
   # some icky special-case parsing to find mapping between collection names and
   # iter vars
   def process_iter(exp)
+    puts "Processing #{exp}"
     if exp[1] and exp[1][0] == :call
       return exp unless exp[2]
       gather_collection_names(exp[1])

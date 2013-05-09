@@ -1254,7 +1254,7 @@ module Bud
           # @storage[vals] = vals
         end
       end
-      
+ 
       @pending = {}
       @tick_delta.clear
     end
