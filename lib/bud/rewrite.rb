@@ -280,12 +280,11 @@ class RuleRewriter < Ruby2Ruby # :nodoc: all
       reset_instance_vars
       rhs_pos = collect_rhs(AttrNameRewriter.new(@bud_instance).process(rhs_ast_dup))
     end
-
-    if @bud_instance.tables[lhs.to_sym].class <= Bud::BudSQLTable
+    
+    rhs_has_sql = @tables.collect { |t,v| t.is_a? Bud::BudSQLTable }.include? true
+    if @bud_instance.tables[lhs.to_sym].class <= Bud::BudSQLTable && rhs_has_sql
       @sql_tabs[lhs] = [] unless @sql_tabs[lhs]
-      sql = sqlr.join_info.to_s
-      puts "sql: #{sql}"
-      @sql_tabs[lhs] << sql
+      @sql_tabs[lhs] << sqlr.join_info.to_s
     end
     
     # Do not record the rule if all collections on rhs are SQLTables

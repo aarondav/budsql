@@ -63,7 +63,6 @@ class BudMeta #:nodoc: all
       end
     end
 
-    # create the views here
     create_sql_views(sql_views_to_be_created)
     
     rulebag.each_value do |v|
