@@ -283,7 +283,9 @@ class RuleRewriter < Ruby2Ruby # :nodoc: all
 
     if @bud_instance.tables[lhs.to_sym].class <= Bud::BudSQLTable
       @sql_tabs[lhs] = [] unless @sql_tabs[lhs]
-      @sql_tabs[lhs] << sqlr.join_info.to_s
+      sql = sqlr.join_info.to_s
+      puts "sql: #{sql}"
+      @sql_tabs[lhs] << sql
     end
     
     # Do not record the rule if all collections on rhs are SQLTables
