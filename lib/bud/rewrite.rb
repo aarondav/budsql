@@ -268,8 +268,6 @@ class RuleRewriter < Ruby2Ruby # :nodoc: all
 
     sqlr = SQLRewriter.new(@bud_instance)
     rhs_ast = sqlr.process(rhs_ast)
-    # TODO: Post-proces
-    sql = sqlr.join_info
     
     if @bud_instance.options[:no_attr_rewrite]
       rhs = collect_rhs(rhs_ast)
@@ -284,7 +282,8 @@ class RuleRewriter < Ruby2Ruby # :nodoc: all
     end
 
     if @bud_instance.tables[lhs.to_sym].class <= Bud::BudSQLTable
-      @sql_tabs[lhs] << mystery_method(rhs) # TODO: mystery_method should return some SQL statement given the RHS
+      @sql_tabs[lhs] = [] unless @sql_tabs[lhs]
+      @sql_tabs[lhs] << sqlr.join_info.to_s
     end
     
     # Do not record the rule if all collections on rhs are SQLTables
