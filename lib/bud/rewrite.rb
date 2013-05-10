@@ -2,6 +2,7 @@ require 'rubygems'
 
 class RuleRewriter < Ruby2Ruby # :nodoc: all
   attr_accessor :rule_indx, :rules, :depends
+  attr_reader :sql_tabs
 
   OP_LIST = [:<<, :<, :<=].to_set
   TEMP_OP_LIST = [:-@, :~, :+@].to_set
@@ -12,6 +13,8 @@ class RuleRewriter < Ruby2Ruby # :nodoc: all
                         :tabname, :current_value].to_set
 
   def initialize(seed, bud_instance)
+    @sql_tabs = {}
+    
     @bud_instance = bud_instance
     @tables = {}
     @nm = false
@@ -274,7 +277,15 @@ class RuleRewriter < Ruby2Ruby # :nodoc: all
       reset_instance_vars
       rhs_pos = collect_rhs(AttrNameRewriter.new(@bud_instance).process(rhs_ast_dup))
     end
-    record_rule(lhs, op, rhs_pos, rhs, ufr.unsafe_func_called)
+    
+    if @bud_instance.tables[lhs.to_sym].class <= Bud::BudSQLTable
+      @sql_tabs[lhs] << mystery_method(rhs) # TODO: mystery_method should return some SQL statement given the RHS
+    end
+    
+    # Do not record the rule if all collections on rhs are SQLTables
+    unless @tables.reduce(true) { |s, (k,v)| s && @bud_instance.tables[k.to_sym].class <= Bud::BudSQLTable }
+      record_rule(lhs, op, rhs_pos, rhs, ufr.unsafe_func_called)
+    end
     drain(exp)
   end
 

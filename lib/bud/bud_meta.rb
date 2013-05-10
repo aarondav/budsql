@@ -51,16 +51,21 @@ class BudMeta #:nodoc: all
     # we are shredding down to the granularity of rule heads.
     seed = 0
     rulebag = {}
+    sql_views_to_be_created = {}
     @bud_instance.class.ancestors.reverse.each do |anc|
       @declarations.each do |meth_name|
         rw = rewrite_rule_block(anc, meth_name, seed)
         if rw
           seed = rw.rule_indx
           rulebag[meth_name] = rw
+          sql_views_to_be_created.merge! rw.sql_tabs
         end
       end
     end
 
+    # create the views here
+    create_sql_views(sql_views_to_be_created)
+    
     rulebag.each_value do |v|
       v.rules.each {|r| @bud_instance.t_rules << r}
       v.depends.each {|d| @bud_instance.t_depends << d}
@@ -103,9 +108,17 @@ class BudMeta #:nodoc: all
       end
       raise Bud::CompileError, "#{error_msg} in rule block \"#{block_name}\"#{src_msg}"
     end
+
     rewriter = RuleRewriter.new(seed, @bud_instance)
     rewriter.process(pt)
     return rewriter
+  end
+  
+  def create_sql_views(sql_views_to_be_created)
+    sql_views_to_be_created.each do |table, statements|
+      states = statements.collect { |s| "(" + s + ")" }
+      @bud_instance.pg_connection.exec("CREATE VIEW #{table.to_s + '_view'} AS " + states.join(" UNION "))
+    end
   end
 
   def get_qual_name(pt)

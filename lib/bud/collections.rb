@@ -467,7 +467,6 @@ module Bud
     # construct and return a merged tuple by using lattice merge functions.
     private
     def merge_to_buf(buf, key, tup, old)
-      puts "merge_to_buf being called with key #{key}"
       if old.nil?               # no matching tuple found
         buf[key] = tup
         return
@@ -1301,7 +1300,6 @@ module Bud
         end
         bud_instance.pg_connection.exec("DELETE FROM #{@tabname} WHERE #{delete_clause.join(" AND ")}")
       end
-      puts "in tick: #{@to_delete}"
       
       # Delayed merges
       merge_to_sql(@pending)
