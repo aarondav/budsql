@@ -280,16 +280,19 @@ class RuleRewriter < Ruby2Ruby # :nodoc: all
       reset_instance_vars
       rhs_pos = collect_rhs(AttrNameRewriter.new(@bud_instance).process(rhs_ast_dup))
     end
-    
-    rhs_has_sql = @tables.collect { |t,v| t.is_a? Bud::BudSQLTable }.include? true
-    if @bud_instance.tables[lhs.to_sym].class <= Bud::BudSQLTable && rhs_has_sql
+
+    dropRule = false
+    if @bud_instance.tables[lhs.to_sym].class <= Bud::BudSQLTable and sqlr.join_info.valid? and @tables.reduce(true) { |s, (k,v)| s && @bud_instance.tables[k.to_sym].class <= Bud::BudSQLTable }
       @sql_tabs[lhs] = [] unless @sql_tabs[lhs]
       @sql_tabs[lhs] << sqlr.join_info.to_s
+      dropRule = true
     end
     
     # Do not record the rule if all collections on rhs are SQLTables
-    unless @tables.reduce(true) { |s, (k,v)| s && @bud_instance.tables[k.to_sym].class <= Bud::BudSQLTable }
+    unless dropRule
       record_rule(lhs, op, rhs_pos, rhs, ufr.unsafe_func_called)
+    else
+      puts "Dropping rule: #{lhs} #{op} #{rhs}"
     end
     drain(exp)
   end
@@ -432,11 +435,16 @@ class SQLRewriter < SexpProcessor
     end
 
     def to_s
-      sql = "SELECT #{@columns.join(",")} FROM #{@tables.join(",")}"
+      tableViews = @tables.map{ |t| t.to_s + "_view" }
+      sql = "SELECT #{@columns.join(",")} FROM #{tableViews.join(",")}"
       unless @predicate == ""
         sql += " WHERE #{@predicate}"
       end
       sql
+    end
+
+    def valid?
+      @tables.length > 0 and @columns.length > 0
     end
   end
 
@@ -452,7 +460,15 @@ class SQLRewriter < SexpProcessor
   def process_call(exp)
     tag, recv, op, *args = exp
 
-    puts "Hello: #{exp}"
+    if not recv.nil? and op == :materialize
+      if not recv[1].nil?
+        throw BudError("Can't currently handle complicated SQL table names (#{recv})")
+      end
+
+      @bud_instance.tables[recv[2]].materialize
+      return process(recv)
+    end
+
     ret = s(tag, process(recv), op, *(args.map{|a| process(a)}))
 
     if recv == nil and op.is_a? Symbol and  @join_info.tables.size == 0 # hack!
@@ -468,16 +484,18 @@ class SQLRewriter < SexpProcessor
     if op == :pairs
       @join_info.tables.each do |table|
         @bud_instance.tables[table].cols.each do |c|
-          @join_info.columns << "#{table}.#{c}"
+          @join_info.columns << "#{table}_view.#{c}"
         end
       end
     elsif op == :lefts
-      @bud_instance.tables[@join_info.tables[0]].cols.each do |c|
-        @join_info.columns << "#{table}.#{c}"
+      table = @join_info.tables[0]
+      @bud_instance.tables[table].cols.each do |c|
+        @join_info.columns << "#{table}_view.#{c}"
       end
     elsif op == :rights
-      @bud_instance.tables[@join_info.tables[1]].cols.each do |c|
-        @join_info.columns << "#{table}.#{c}"
+      table = @join_info.tables[1]
+      @bud_instance.tables[table].cols.each do |c|
+        @join_info.columns << "#{table}_view.#{c}"
       end
     end
 
@@ -486,8 +504,6 @@ class SQLRewriter < SexpProcessor
 
   def process_iter(exp)
     tag, recv, iter_args, body = exp
-#    new_body = 
-#    puts "Yo, in iter: #{exp} / #{body} / #{new_body}"
     
     ret = s(tag, process(recv), process(iter_args), push_and_process(body))
 
@@ -511,7 +527,6 @@ class SQLRewriter < SexpProcessor
   def process_args(exp)
     tag, *args = exp
 
-    puts "Args: #{exp}"
     ret = s(tag, *args)
 
     (0..args.size-1).each do |i|
@@ -529,12 +544,11 @@ class SQLRewriter < SexpProcessor
     r2r = Ruby2Ruby.new
     sql_pred = r2r.process(pred)
     pred = parser.process(sql_pred)
-    puts "If: #{exp} / #{pred} / #{blk}"
     sql_pred.gsub!("==", "=")
     sql_pred.gsub!('"', "'")
 
     @join_info.block_aliases.each do |balias, table|
-      sql_pred.gsub!("#{balias}.", "#{table}.")
+      sql_pred.gsub!("#{balias}.", "#{table}_view.")
     end
 
     @join_info.predicate = sql_pred
@@ -544,15 +558,13 @@ class SQLRewriter < SexpProcessor
 
   def process_array(exp)
     tag, *args = exp
-    puts "Array: #{exp}"
 
     if (@join_info.tables.size > 0)
       @join_info.columns = []
       args.each do |arg|
         tab = @join_info.block_aliases[arg[1][1].to_s]
         col = arg[2]
-        @join_info.columns << "#{tab}.#{col}"
-        puts "Adding #{@join_info.block_aliases} / #{arg[1]} / #{tab}.#{col}"
+        @join_info.columns << "#{tab}_view.#{col}"
       end
     end
 

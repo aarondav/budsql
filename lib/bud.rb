@@ -188,17 +188,17 @@ module Bud
         type = s[0]
         case type
         when :string
-          type = "varchar(50)"
+          type = "text"
         when :int
           type = "integer"
         when :bool
           type = "boolean"
         else
-          type = "varchar(50)"
+          type = "text"
         end
         s[1].to_s + " " + type
       end
-      self.pg_connection.exec("CREATE TABLE IF NOT EXISTS #{v.tabname.to_s} (#{sql_schema.join(', ')})")
+      self.pg_connection.exec("CREATE TABLE IF NOT EXISTS #{v.tabname} (#{sql_schema.join(', ')}, CONSTRAINT pkey PRIMARY KEY(#{v.key_cols.join(",")}))")
     end
   end
 

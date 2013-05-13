@@ -568,6 +568,7 @@ module Bud
     # insertion of tuples into Bud collections in a sync_do block).
     public
     def merge(o, buf=@delta) # :nodoc: all
+      puts "Merge #{qualified_tabname} <= #{o} (#{o.class})"
       if o.class <= Bud::PushElement
         add_merge_target
         deduce_schema(o) if @cols.nil?
@@ -1229,7 +1230,7 @@ module Bud
       pred_string = preds[0].map { |j,k| @col_names[0].to_s + "." + j.to_s + " = " + @col_names[1].to_s + "." + k.to_s }.join(" AND ") rescue ""
       pred_string = "WHERE " + pred_string unless pred_string == ""
       select_clause = @collections.map { |c| c.cols.map { |col| c.tabname.to_s + "." + col.to_s + " AS " + c.tabname.to_s + "_" + col.to_s }.join(",") }.join(",")
-      puts select_clause
+
       @bud_instance.pg_connection.exec("SELECT #{select_clause} FROM #{@col_names.join(',')} #{pred_string}") do |results|
         results.each do |row|
           puts row
@@ -1244,11 +1245,34 @@ module Bud
     def initialize(name, bud_instance, given_schema)
       super(name, bud_instance, given_schema)
       @to_delete = []
+      @materialized = false
       @schema = given_schema
+    end
+
+    def delete_view
+      @bud_instance.pg_connection.exec("DROP VIEW IF EXISTS #{@tabname}_view CASCADE");
+    end
+
+    def create_table
+      tab_cols = []
+      @given_schema.each do |type, col|
+        tab_cols << "#{col} #{typeNameToSQL(type)}"
+      end
+      puts "CREATE TABLE IF NOT EXISTS #{@tabname} (#{tab_cols.join(",")}, CONSTRAINT pkey PRIMARY KEY(#{key_cols.join(",")}))"
+      @bud_instance.pg_connection.exec("CREATE TABLE IF NOT EXISTS #{@tabname} (#{tab_cols.join(",")}, CONSTRAINT pkey PRIMARY KEY(#{key_cols.join(",")}))");
+    end
+
+    def materialize
+      puts "Hello!! MATERIALIZE AWAY!"
+      @materialized = true
+      self
+    end
+
+    def mat
+      materialize
     end
     
     public
-    
     def pending_delete(o)
       if o.class <= Bud::PushElement
         add_merge_target
@@ -1288,7 +1312,7 @@ module Bud
     end
     
     def tick
-      
+      puts "TICK! #{@pending}"
       # Instantaneous merges
       tick_d = {}
       @tick_delta.each { |td| tick_d[td] = td }
@@ -1307,17 +1331,19 @@ module Bud
       # Delayed merges
       merge_to_sql(@pending)
 
-      bud_instance.pg_connection.exec("SELECT * FROM #{@tabname}") do |results|
-        results.each do |row|
-          vals = []
-          @given_schema.each do |type, col|
-            vals << convertFromSQL(row[col.to_s], type)
+      if @materialized
+        bud_instance.pg_connection.exec("SELECT * FROM #{@tabname}_view") do |results|
+          results.each do |row|
+            vals = []
+            @given_schema.each do |type, col|
+              vals << convertFromSQL(row[col.to_s], type)
+            end
+            merge_to_buf(@delta, vals, vals, @storage[vals])
+            # @storage[vals] = vals
           end
-          merge_to_buf(@delta, vals, vals, @storage[vals])
-          # @storage[vals] = vals
         end
       end
- 
+        
       @pending = {}
       @tick_delta.clear
     end
@@ -1361,6 +1387,17 @@ module Bud
         return val ? "'t'" : "'f'"
       when :int
         return val.to_i
+      end
+    end
+
+    def typeNameToSQL(type)
+      case type
+      when :string
+        return "text"
+      when :int
+        return "integer"
+      when :bool
+        return "boolean"
       end
     end
   end
