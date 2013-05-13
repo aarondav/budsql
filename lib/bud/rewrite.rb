@@ -502,7 +502,7 @@ class SQLRewriter < SexpProcessor
       @join_info.tables = []
       @join_info.columns = []
     elsif numSqlTables != @join_info.tables.size
-      throw BudError("All tables on right hand side must be sql IFF at least one is a sql table")
+      raise BudSQLError "Cannot mix sqltables and other collections on RHS"
     end
 
     return ret
