@@ -282,6 +282,7 @@ class RuleRewriter < Ruby2Ruby # :nodoc: all
     end
 
     dropRule = false
+    sqlr.join_info.move_singleton
     if @bud_instance.tables[lhs.to_sym].class <= Bud::BudSQLTable and sqlr.join_info.valid? and @tables.reduce(true) { |s, (k,v)| s && @bud_instance.tables[k.to_sym].class <= Bud::BudSQLTable }
       @sql_tabs[lhs] = [] unless @sql_tabs[lhs]
       @sql_tabs[lhs] << sqlr.join_info.to_s
@@ -421,13 +422,14 @@ class SQLRewriter < SexpProcessor
   attr_accessor :join_info
 
   class JoinInfo
-    attr_accessor :tables, :columns, :predicate, :block_aliases
+    attr_accessor :tables, :columns, :predicate, :block_aliases, :singleton
     def initialize(bud_instance)
       @tables = []
       @columns = []
       @predicate = ""
       @bud_instance = bud_instance
       @block_aliases = {}
+      @singleton = nil
     end
 
     def prependTable(table)
@@ -445,6 +447,13 @@ class SQLRewriter < SexpProcessor
 
     def valid?
       @tables.length > 0 and @columns.length > 0
+    end
+    
+    def move_singleton
+      if not valid? and not @singleton.nil?
+        @tables = [@singleton]
+        @columns = @bud_instance.tables[@singleton].cols.dup
+      end
     end
   end
 
@@ -471,9 +480,9 @@ class SQLRewriter < SexpProcessor
 
     ret = s(tag, process(recv), op, *(args.map{|a| process(a)}))
 
+
     if recv == nil and op.is_a? Symbol and  @join_info.tables.size == 0 # hack!
-      @join_info.tables << op
-      @join_info.columns = @bud_instance.tables[op].cols
+      @join_info.singleton = op
     end
 
     if op == :*
@@ -483,8 +492,14 @@ class SQLRewriter < SexpProcessor
 
     if op == :pairs
       @join_info.tables.each do |table|
+        puts "Table: #{table}"
         @bud_instance.tables[table].cols.each do |c|
+          puts "Col: #{c}"
+        end
+        @bud_instance.tables[table].cols.each do |c|
+          puts "Col: #{@bud_instance.tables[table].cols.length}"
           @join_info.columns << "#{table}_view.#{c}"
+          puts "Now: #{@bud_instance.tables[table].cols.length}"
         end
       end
     elsif op == :lefts
@@ -506,6 +521,8 @@ class SQLRewriter < SexpProcessor
     tag, recv, iter_args, body = exp
     
     ret = s(tag, process(recv), process(iter_args), push_and_process(body))
+
+    @join_info.move_singleton
 
     numSqlTables = 0
     @join_info.tables.each do |t|
@@ -529,6 +546,8 @@ class SQLRewriter < SexpProcessor
 
     ret = s(tag, *args)
 
+    @join_info.move_singleton
+
     (0..args.size-1).each do |i|
       @join_info.block_aliases[args[i].to_s] = @join_info.tables[i]
     end
@@ -539,6 +558,8 @@ class SQLRewriter < SexpProcessor
   def process_if(exp)
     tag, pred, blk, nothing = exp
 #    ret = 
+
+    @join_info.move_singleton
 
     parser = RubyParser.new
     r2r = Ruby2Ruby.new
@@ -558,6 +579,8 @@ class SQLRewriter < SexpProcessor
 
   def process_array(exp)
     tag, *args = exp
+
+    @join_info.move_singleton
 
     if (@join_info.tables.size > 0)
       @join_info.columns = []

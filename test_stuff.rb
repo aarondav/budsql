@@ -7,11 +7,12 @@ class HelloWorld
   state do
     sqltable :peeps, [string(:name), int(:id), string(:color)]
     sqltable :names, [string(:name)]
+    sqltable :colors, [string(:name), string(:color)]
   end
 
   bloom do
-    peeps <+ [["george", 5, "green"]]
     names <+ peeps { |p| [p.name] }
+    colors <+ (peeps*names).pairs { |p, n| [p.name, p.color] if p.name == n.name }
     stdio <~ names.materialize { |p| ["Hello #{p}"] }
   end
 end
@@ -19,9 +20,5 @@ end
 t =  HelloWorld.new(:dump_rewrite => true, :pg_host => "localhost", :pg_dbname => "postgres")
 
 t.tick
-t.tick
-t.tick
-
-t.peeps <+ [["mary", 9, "mauve"]]
 t.tick
 t.tick

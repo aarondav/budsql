@@ -120,6 +120,7 @@ class BudMeta #:nodoc: all
 
     # Create views!
     sqltables.each do |name, table|
+      puts "Creating view for #{name}!"
       if sql_views_to_be_created.has_key? name.to_s
         statements = sql_views_to_be_created[name.to_s]
         states = statements.collect { |s| "(" + s + ")" }
@@ -127,6 +128,7 @@ class BudMeta #:nodoc: all
       else
         table.create_view(nil)
       end
+      puts "Done!"
     end
   end
 

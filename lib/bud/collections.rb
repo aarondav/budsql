@@ -1258,7 +1258,7 @@ module Bud
         states = []
       end
 
-      states.unshift "SELECT * FROM #{@tabname}"
+      states.unshift "(SELECT * FROM #{@tabname})"
       puts "CREATE VIEW #{@tabname}_view AS #{states.join(" UNION ")}"
       @bud_instance.pg_connection.exec("CREATE VIEW #{@tabname}_view AS #{states.join(" UNION ")}")
     end
