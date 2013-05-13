@@ -1262,16 +1262,6 @@ module Bud
       @bud_instance.pg_connection.exec("CREATE TABLE IF NOT EXISTS #{@tabname} (#{tab_cols.join(",")}, CONSTRAINT pkey PRIMARY KEY(#{key_cols.join(",")}))");
     end
 
-    def create_view(states)
-      if states.nil?
-        states = []
-      end
-
-      states.unshift "SELECT * FROM #{@tabname}"
-      puts "CREATE VIEW #{@tabname}_view AS #{states.join(" UNION ")}"
-      @bud_instance.pg_connection.exec("CREATE VIEW #{@tabname}_view AS #{states.join(" UNION ")}")
-    end
-
     def materialize
       puts "Hello!! MATERIALIZE AWAY!"
       @materialized = true

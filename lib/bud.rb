@@ -198,7 +198,7 @@ module Bud
         end
         s[1].to_s + " " + type
       end
-      self.pg_connection.exec("CREATE TABLE IF NOT EXISTS #{v.tabname} (#{sql_schema.join(', ')}, CONSTRAINT pkey PRIMARY_KEY(#{v.key_cols.join(",")})")
+      self.pg_connection.exec("CREATE TABLE IF NOT EXISTS #{v.tabname} (#{sql_schema.join(', ')}, CONSTRAINT pkey PRIMARY KEY(#{v.key_cols.join(",")}))")
     end
   end
 
