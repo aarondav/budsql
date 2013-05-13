@@ -568,7 +568,6 @@ module Bud
     # insertion of tuples into Bud collections in a sync_do block).
     public
     def merge(o, buf=@delta) # :nodoc: all
-      puts "Merge #{qualified_tabname} <= #{o} (#{o.class})"
       if o.class <= Bud::PushElement
         add_merge_target
         deduce_schema(o) if @cols.nil?
@@ -1227,6 +1226,7 @@ module Bud
     end
     
     def pairs(*preds, &blk)
+      puts "&"*50
       pred_string = preds[0].map { |j,k| @col_names[0].to_s + "." + j.to_s + " = " + @col_names[1].to_s + "." + k.to_s }.join(" AND ") rescue ""
       pred_string = "WHERE " + pred_string unless pred_string == ""
       select_clause = @collections.map { |c| c.cols.map { |col| c.tabname.to_s + "." + col.to_s + " AS " + c.tabname.to_s + "_" + col.to_s }.join(",") }.join(",")
@@ -1254,17 +1254,14 @@ module Bud
     end
 
     def create_view(states)
-      if states.nil?
-        states = []
-      end
-
+      states = [] if states.nil?
+      delete_view
       states.unshift "SELECT * FROM #{@tabname}"
       puts "CREATE VIEW #{@tabname}_view AS #{states.join(" UNION ")}"
       @bud_instance.pg_connection.exec("CREATE VIEW #{@tabname}_view AS #{states.join(" UNION ")}")
     end
 
     def materialize
-      puts "Hello!! MATERIALIZE AWAY!"
       @materialized = true
       self
     end

@@ -282,18 +282,16 @@ class RuleRewriter < Ruby2Ruby # :nodoc: all
     end
 
     dropRule = false
-    if @bud_instance.tables[lhs.to_sym].class <= Bud::BudSQLTable and sqlr.join_info.valid? and @tables.reduce(true) { |s, (k,v)| s && @bud_instance.tables[k.to_sym].class <= Bud::BudSQLTable }
-      @sql_tabs[lhs] = [] unless @sql_tabs[lhs]
+    rhs_is_all_sqltables = @tables.reduce(true) { |s, (k,v)| s && @bud_instance.tables[k.to_sym].is_a?(Bud::BudSQLTable) }
+    if @bud_instance.tables[lhs.to_sym].is_a?(Bud::BudSQLTable) and sqlr.join_info.valid? and rhs_is_all_sqltables
+      @sql_tabs[lhs] ||= []
       @sql_tabs[lhs] << sqlr.join_info.to_s
       dropRule = true
     end
     
     # Do not record the rule if all collections on rhs are SQLTables
-    unless dropRule
-      record_rule(lhs, op, rhs_pos, rhs, ufr.unsafe_func_called)
-    else
-      puts "Dropping rule: #{lhs} #{op} #{rhs}"
-    end
+    record_rule(lhs, op, rhs_pos, rhs, ufr.unsafe_func_called) unless dropRule
+
     drain(exp)
   end
 
@@ -436,7 +434,7 @@ class SQLRewriter < SexpProcessor
 
     def to_s
       tableViews = @tables.map{ |t| t.to_s + "_view" }
-      sql = "SELECT #{@columns.join(",")} FROM #{tableViews.join(",")}"
+      sql = "SELECT #{@columns.uniq.join(",")} FROM #{tableViews.uniq.join(",")}"
       unless @predicate == ""
         sql += " WHERE #{@predicate}"
       end
@@ -462,7 +460,7 @@ class SQLRewriter < SexpProcessor
 
     if not recv.nil? and op == :materialize
       if not recv[1].nil?
-        throw BudError("Can't currently handle complicated SQL table names (#{recv})")
+        raise BudSQLError "Can't currently handle complicated SQL table names (#{recv})"
       end
 
       @bud_instance.tables[recv[2]].materialize
@@ -473,7 +471,7 @@ class SQLRewriter < SexpProcessor
 
     if recv == nil and op.is_a? Symbol and  @join_info.tables.size == 0 # hack!
       @join_info.tables << op
-      @join_info.columns = @bud_instance.tables[op].cols
+      @join_info.columns = Array.new(@bud_instance.tables[op].cols).collect { |c| "#{op.to_s}_view.#{c}"}
     end
 
     if op == :*
@@ -653,7 +651,6 @@ class AttrNameRewriter < SexpProcessor # :nodoc: all
   # some icky special-case parsing to find mapping between collection names and
   # iter vars
   def process_iter(exp)
-    puts "Processing #{exp}"
     if exp[1] and exp[1][0] == :call
       return exp unless exp[2]
       gather_collection_names(exp[1])
