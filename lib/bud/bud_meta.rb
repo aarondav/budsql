@@ -115,10 +115,19 @@ class BudMeta #:nodoc: all
   end
   
   def create_sql_views(sql_views_to_be_created)
-    sql_views_to_be_created.each do |table, statements|
-      puts "HELLO HOW ARE YOU DOING TODAY THIS FINE EVENING"
-      states = statements.collect { |s| "(" + s + ")" }
-      @bud_instance.pg_connection.exec("CREATE VIEW #{table.to_s + '_view'} AS " + states.join(" UNION "))
+    sqltables = @bud_instance.tables.reject {|name,t| not t.is_a? Bud::BudSQLTable}
+    sqltables.each { |name, table| table.create_table }
+    sqltables.each { |name, table| table.delete_view }
+
+    # Create views!
+    sqltables.each do |name, table|
+      if sql_views_to_be_created.has_key? name.to_s
+        statements = sql_views_to_be_created[name.to_s]
+        states = statements.collect { |s| "(" + s + ")" }
+        table.create_view(states)
+      else
+        table.create_view(nil)
+      end
     end
   end
 
