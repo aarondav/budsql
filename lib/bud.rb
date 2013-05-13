@@ -163,8 +163,9 @@ module Bud
     # Connect to databse (currently postgres)
     if @options[:pg_host] && @options[:pg_dbname]
       @pg_connection = PG.connect( :host => @options[:pg_host], :dbname => @options[:pg_dbname] )
+      init_sql_tables
     end
-    
+
     @declarations = self.class.instance_methods.select {|m| m =~ /^__bloom__.+$/}.map {|m| m.to_s}
 
     @viz = VizOnline.new(self) if @options[:trace]
@@ -178,6 +179,26 @@ module Bud
       @push_sources = @num_strata.times.map{{}}
       @push_joins = @num_strata.times.map{[]}
       @merge_targets = @num_strata.times.map{Set.new}
+    end
+  end
+
+  def init_sql_tables
+    @tables.select{|k,v| v if v.is_a? Bud::BudSQLTable}.each do |k,v|
+      sql_schema = v.schema.collect do |s|
+        type = s[0]
+        case type
+        when :string
+          type = "text"
+        when :int
+          type = "integer"
+        when :bool
+          type = "boolean"
+        else
+          type = "text"
+        end
+        s[1].to_s + " " + type
+      end
+      self.pg_connection.exec("CREATE TABLE IF NOT EXISTS #{v.tabname} (#{sql_schema.join(', ')}, CONSTRAINT pkey PRIMARY_KEY(#{v.key_cols.join(",")})")
     end
   end
 

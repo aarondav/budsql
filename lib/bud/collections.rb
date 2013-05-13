@@ -1240,10 +1240,13 @@ module Bud
   end
   
   class BudSQLTable < BudPersistentCollection
+    attr_reader :schema
+    
     def initialize(name, bud_instance, given_schema)
       super(name, bud_instance, given_schema)
       @to_delete = []
       @materialized = false
+      @schema = given_schema
     end
 
     def delete_view
