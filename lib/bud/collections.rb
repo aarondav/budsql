@@ -1253,13 +1253,14 @@ module Bud
       @bud_instance.pg_connection.exec("DROP VIEW IF EXISTS #{@tabname}_view CASCADE");
     end
 
-    def create_table
-      tab_cols = []
-      @given_schema.each do |type, col|
-        tab_cols << "#{col} #{typeNameToSQL(type)}"
+    def create_view(states)
+      if states.nil?
+        states = []
       end
-      puts "CREATE TABLE IF NOT EXISTS #{@tabname} (#{tab_cols.join(",")}, CONSTRAINT pkey PRIMARY KEY(#{key_cols.join(",")}))"
-      @bud_instance.pg_connection.exec("CREATE TABLE IF NOT EXISTS #{@tabname} (#{tab_cols.join(",")}, CONSTRAINT pkey PRIMARY KEY(#{key_cols.join(",")}))");
+
+      states.unshift "SELECT * FROM #{@tabname}"
+      puts "CREATE VIEW #{@tabname}_view AS #{states.join(" UNION ")}"
+      @bud_instance.pg_connection.exec("CREATE VIEW #{@tabname}_view AS #{states.join(" UNION ")}")
     end
 
     def materialize
