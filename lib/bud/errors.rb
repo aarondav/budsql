@@ -19,4 +19,7 @@ module Bud
   
   # Raised when evaluation halts with outstanding callbacks.
   class ShutdownWithCallbacksError < Error; end
+  
+  # Raised when sqltables are improperly used.
+  class BudSQLError < Error; end
 end
