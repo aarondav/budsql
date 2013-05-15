@@ -15,7 +15,7 @@ module Bud
     include Enumerable
 
     attr_accessor :bud_instance  # :nodoc: all
-    attr_reader :tabname, :cols, :key_cols # :nodoc: all
+    attr_reader :tabname, :cols, :key_cols, :col_types # :nodoc: all
     attr_reader :struct
     attr_reader :storage, :delta, :new_delta, :pending, :tick_delta # :nodoc: all
     attr_reader :wired_by, :scanner_cnt
@@ -46,7 +46,7 @@ module Bud
     def init_schema(given_schema)
       given_schema ||= {[:key]=>[:val]}
       @given_schema = given_schema
-      @cols, @key_cols = BudCollection.parse_schema(given_schema)
+      @cols, @key_cols, @col_types = BudCollection.parse_schema(given_schema)
 
       # Check that no location specifiers appear in the schema. In the case of
       # channels, the location specifier has already been stripped from the
@@ -85,11 +85,15 @@ module Bud
     def self.parse_schema(given_schema)
       if given_schema.respond_to? :keys
         raise Bud::Error, "invalid schema for #{tabname}" if given_schema.length != 1
-        key_cols = given_schema.keys.first
-        val_cols = given_schema.values.first
+        key_cols = given_schema.keys.first.map { |i| i.is_a?(Array) ? i[1] : i }
+        val_cols = given_schema.values.first.map { |i| i.is_a?(Array) ? i[1] : i }
+
+        col_types = given_schema.keys.first.select { |i| i.is_a? Array }.map { |i| i[0] }
+        col_types += given_schema.values.first.select { |i| i.is_a? Array}.map { |i| i[0] }
       else
         key_cols = given_schema.map { |i| i.is_a?(Array) ? i[1] : i }
         val_cols = []
+        col_types = given_schema.select { |i| i.is_a? Array }.map { |i| i[0] }
       end
 
       cols = key_cols + val_cols
@@ -102,7 +106,7 @@ module Bud
         raise Bud::Error, "schema #{given_schema.inspect} contains duplicate names"
       end
 
-      return [cols, key_cols]
+      return [cols, key_cols, col_types]
     end
 
     # produces the schema in a format that is useful as the schema specification for another table
@@ -1216,7 +1220,7 @@ module Bud
       raise Bud::Error, "abstract method not implemented by derived class #{self.class}"
     end
   end
-  
+
   # TODO: maybe refactor to anon classes
   class SQLJoin
     def initialize(collections, bud_instance)
@@ -1224,7 +1228,7 @@ module Bud
       @col_names = collections.map { |c| c.tabname }
       @bud_instance = bud_instance
     end
-    
+
     def pairs(*preds, &blk)
       puts "&"*50
       pred_string = preds[0].map { |j,k| @col_names[0].to_s + "." + j.to_s + " = " + @col_names[1].to_s + "." + k.to_s }.join(" AND ") rescue ""
@@ -1238,27 +1242,99 @@ module Bud
       end
     end
   end
-  
+
   class BudSQLTable < BudPersistentCollection
     attr_reader :schema
-    
+    attr_accessor :update_infos
+
     def initialize(name, bud_instance, given_schema)
       super(name, bud_instance, given_schema)
       @to_delete = []
+      @to_update = []
       @materialized = false
-      @schema = given_schema
+      @schema = @col_types.zip(@cols)
+      @update_infos = []
+
+      raise "sqltable #{name} needs types in schema" unless @cols.size == @schema.reject {|s| s[0].nil?}.size
     end
 
     def delete_view
       @bud_instance.pg_connection.exec("DROP VIEW IF EXISTS #{@tabname}_view CASCADE");
     end
 
-    def create_view(states)
-      states = [] if states.nil?
-      delete_view
-      states.unshift "(SELECT * FROM #{@tabname})"
-      puts "CREATE VIEW #{@tabname}_view AS #{states.join(" UNION ")}"
-      @bud_instance.pg_connection.exec("CREATE VIEW #{@tabname}_view AS #{states.join(" UNION ")}")
+    def pg_exec(query)
+      puts "Executing query: #{query}"
+      @bud_instance.pg_connection.exec(query)
+    end
+
+    def do_update()
+      puts "UPDATE!!!"
+      # Need: join tables (nodes, edges)               [j.tables]
+      #       predicates (n1.name = edges.f)           [j.predicate]
+      #       key equivalences (nodes.name=edges.t)    [j.columns]
+      #       val updates (SET reachable=true)         [^^^^^^^^^]
+      update_infos.each do |j|
+        base_predicate = (j.predicate == "" ? "1=1" : j.predicate)
+        key_predicate = key_cols.size.times.map { |i| "(#{@tabname}.#{key_cols[i]} = #{j.columns[i]})" }
+        predicate = "#{base_predicate} AND #{key_predicate.join(' AND ')}" unless key_cols.size == 0
+
+        set_exp = val_cols.size.times.map { |i| "#{val_cols()[i]} = #{j.columns[i+key_cols.size]}" }
+
+        pg_exec(%Q{UPDATE #{@tabname}
+                     SET #{set_exp.join(',')}
+                     FROM #{j.named_tables.join(',')}
+                     WHERE #{predicate}
+                  })
+      end
+    end
+
+    def create_view(join_infos)
+      columns = @cols.join(',')
+
+      # First round: do all pre-existing joins
+      # TODO: don't error if it already exists but is the same...
+      join_infos.each do |j|
+        base_predicate = (j.predicate == "" ? "1=1" : j.predicate)
+        pg_exec(%Q{INSERT INTO #{tabname} (#{columns})
+                     SELECT #{j.columns.join(',')} FROM #{j.named_tables.join(',')}
+                     WHERE #{base_predicate}
+                  })
+      end
+
+      # Second round: setup triggers for future inserts/updates
+      # TODO: How will updates NOT trigger an error?
+      join_infos.each do |j|
+        base_predicate = (j.predicate == "" ? "1=1" : j.predicate)
+        puts "Join info for: #{j}"
+
+        j.tables.each do |tname|
+          puts "Table: #{tname}"
+          t = @bud_instance.tables[tname]
+          trig_name = "#{@tabname}_ins_#{tname}"
+
+          key_predicate = t.key_cols.map { |c| "(NEW.#{c} = #{tname}.#{c})" }.join(" AND ")
+          predicate = key_predicate + " AND " + base_predicate
+
+          # Construct insert-update trigger for each table we need to listen to
+          pg_exec(%Q{CREATE OR REPLACE FUNCTION #{trig_name}() RETURNS trigger AS $#{trig_name}$
+                     BEGIN
+                       INSERT INTO #{@tabname} (#{columns})
+                         SELECT #{j.columns.join(',')} FROM #{j.named_tables.join(',')}
+                         WHERE #{predicate};
+                       RETURN NEW;
+                     END;
+                     $#{trig_name}$ LANGUAGE plpgsql;
+                    })
+          pg_exec(%Q{CREATE TRIGGER #{trig_name} AFTER INSERT OR UPDATE ON #{tname}
+                     FOR EACH ROW EXECUTE PROCEDURE #{trig_name}();
+                    })
+        end
+      end
+#      pg.exec("CREATE OR REPLACE FUNCTION #{")
+#      delete_view
+#      states.unshift "(SELECT * FROM #{@tabname})"
+#      puts "CREATE VIEW #{@tabname}_view AS #{states.join(" UNION ")}"
+#      @bud_instance.pg_connection.exec("CREATE VIEW #{@tabname}_view AS #{states.join(" UNION ")}")
     end
 
     def materialize
@@ -1269,7 +1345,7 @@ module Bud
     def mat
       materialize
     end
-    
+
     public
     def pending_delete(o)
       if o.class <= Bud::PushElement
@@ -1300,40 +1376,75 @@ module Bud
     superator "<-" do |o|
       pending_delete(o)
     end
-    
+
+    public
+    def pending_update(o)
+      if o.class <= Bud::PushElement
+        add_merge_target
+        o.wire_to(self, :update)
+      elsif o.class <= Bud::BudCollection
+        add_merge_target
+        o.pro.wire_to(self, :update)
+      elsif o.class <= Proc
+        add_merge_target
+        tbl = register_coll_expr(o)
+        tbl.pro.wire_to(self, :update)
+      elsif o.class <= Bud::LatticePushElement
+        add_merge_target
+        o.wire_to(self, :update)
+      elsif o.class <= Bud::LatticeWrapper
+        add_merge_target
+        o.to_push_elem.wire_to(self, :update)
+      else
+        unless o.nil?
+          o = o.uniq.compact if o.respond_to?(:uniq)
+          check_enumerable(o)
+          establish_schema(o) if @cols.nil?
+          o.each{|i| @to_update << prep_tuple(i)}
+        end
+      end
+    end
+    public
+    superator "<+-" do |o|
+      pending_update(o)
+    end
+
     def *(collection)
       SQLJoin.new([self, collection], bud_instance)
     end
-    
+
     def accumulate_tick_deltas
       true
     end
-    
+
     def tick
       puts "TICK! #{@pending}"
       # Instantaneous merges
       tick_d = {}
       @tick_delta.each { |td| tick_d[td] = td }
-      
+
       merge_to_sql(tick_d)
-      
+
       # Delayed deletions
       @to_delete.each do |tup|
         delete_clause = []
         (0..(tup.size-1)).each do |i|
-          delete_clause << @given_schema[i][1].to_s + " = " + convertToSQL(tup[i], @given_schema[i][0]).to_s
+          delete_clause << @schema[i][1].to_s + " = " + convertToSQL(tup[i], @schema[i][0]).to_s
         end
         bud_instance.pg_connection.exec("DELETE FROM #{@tabname} WHERE #{delete_clause.join(" AND ")}")
       end
-      
+
       # Delayed merges
       merge_to_sql(@pending)
 
+      do_update() # TODO: Right location?
+
       if @materialized
-        bud_instance.pg_connection.exec("SELECT * FROM #{@tabname}_view") do |results|
+        @storage.clear
+        bud_instance.pg_connection.exec("SELECT * FROM #{@tabname}") do |results|
           results.each do |row|
             vals = []
-            @given_schema.each do |type, col|
+            @schema.each do |type, col|
               vals << convertFromSQL(row[col.to_s], type)
             end
             merge_to_buf(@delta, vals, vals, @storage[vals])
@@ -1341,31 +1452,31 @@ module Bud
           end
         end
       end
-        
+
       @pending = {}
       @tick_delta.clear
     end
-    
+
     def merge_to_sql(vals)
-      schema_row = @given_schema.map { |e| e[1] }.join(',')
+      schema_row = @schema.map { |e| e[1] }.join(',')
       vals.each do |key, tup|
         values= []
         (0..(tup.size-1)).each do |i|
-          values << convertToSQL(tup[i], @given_schema[i][0])
+          values << convertToSQL(tup[i], @schema[i][0])
         end
         values = values.join(",")
         bud_instance.pg_connection.exec("INSERT INTO #{@tabname} (#{schema_row}) VALUES (#{values})") rescue nil
       end
     end
-    
+
     def invalidated=(val)
        # Might be reset to false at end-of-tick, but shouldn't be set to true
        raise Bud::Error, "cannot not set invalidate on table '#{@tabname}'" if val
        super
     end
-    
+
     private
-    
+
     def convertFromSQL(val, type)
       case type
       when :string
@@ -1376,7 +1487,7 @@ module Bud
         return val.to_i
       end
     end
-    
+
     def convertToSQL(val, type)
       case type
       when :string
@@ -1578,7 +1689,7 @@ module Bud
       @linenum = 0
       @invalidated = true
     end
-    
+
     def tick
       @invalidated = true
     end

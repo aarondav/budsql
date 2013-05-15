@@ -64,7 +64,7 @@ class BudMeta #:nodoc: all
     end
 
     create_sql_views(sql_views_to_be_created)
-    
+
     rulebag.each_value do |v|
       v.rules.each {|r| @bud_instance.t_rules << r}
       v.depends.each {|d| @bud_instance.t_depends << d}
@@ -112,14 +112,23 @@ class BudMeta #:nodoc: all
     rewriter.process(pt)
     return rewriter
   end
-  
+
   def create_sql_views(sql_views_to_be_created)
     sqltables = @bud_instance.tables.select { |name,t| t.is_a? Bud::BudSQLTable }
 
     sqltables.each do |name, table|
-      statements = sql_views_to_be_created[name.to_s] || []
-      states = statements.collect { |s| "(" + s + ")" }
-      table.create_view(states)
+      join_infos = sql_views_to_be_created[name.to_s] || []
+      insert_infos = join_infos.select { |i| i.operator == :insert }
+      update_infos = join_infos.select { |i| i.operator == :update }
+      delete_infos = join_infos.select { |i| i.operator == :delete }
+
+      raise "SQL DELETE joins not supported right now" unless delete_infos.size == 0
+
+      puts "INSERT INFOS: #{insert_infos}"
+      puts "UPDATE INFOS: #{update_infos}"
+      #states = statements.collect { |s| "(" + s + ")" }
+      table.create_view(insert_infos)
+      table.update_infos = update_infos.dup
     end
   end
 

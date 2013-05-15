@@ -20,6 +20,7 @@ module Bud
       @outputs = Set.new
       @pendings = Set.new
       @deletes = Set.new
+      @updates = Set.new
       @delete_keys = Set.new
       @wired_by = []
       @elem_name = name_in
@@ -30,7 +31,7 @@ module Bud
     end
 
     def wirings
-      @wirings ||= @outputs + @pendings + @deletes + @delete_keys
+      @wirings ||= @outputs + @pendings + @deletes + @delete_keys + @updates
     end
 
     public
@@ -38,7 +39,7 @@ module Bud
       depth.times {print "  "}
       puts "#{accum} #{(self.object_id*2).to_s(16)}: #{qualified_tabname} (#{self.class})"
 
-      [@outputs, @pendings, @deletes, @delete_keys].each do |kind|
+      [@outputs, @pendings, @deletes, @updates, @delete_keys].each do |kind|
         case kind.object_id
         when @outputs.object_id
           next_accum = "=> "
@@ -46,6 +47,8 @@ module Bud
           next_accum = "+> "
         when @deletes.object_id, @delete_keys.object_id
           next_accum = "-> "
+        when @updates.object_id
+          next_accum = "-+> "
         end
 
         kind.each do |o|
@@ -67,7 +70,7 @@ module Bud
     end
 
     def check_wiring
-      if @blk.nil? and @outputs.empty? and @pendings.empty? and @deletes.empty? and @delete_keys.empty?
+      if @blk.nil? and @outputs.empty? and @pendings.empty? and @deletes.empty? and @delete_keys.empty? and @updates.empty?
         raise Bud::Error, "no output specified for PushElement #{@qualified_tabname}"
       end
     end
@@ -90,6 +93,8 @@ module Bud
         @deletes << element
       when :delete_by_key
         @delete_keys << element
+      when :update
+        @updates << element
       else
         raise Bud::Error, "unrecognized wiring kind: #{kind}"
       end
@@ -134,6 +139,7 @@ module Bud
 
       # for the following, o is a BudCollection
       @deletes.each{|o| o.pending_delete([item])}
+      @updates.each{|o| o.pending_update([item])}
       @delete_keys.each{|o| o.pending_delete_keys([item])}
 
       # o is a LatticeWrapper or a BudCollection

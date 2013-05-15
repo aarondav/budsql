@@ -14,7 +14,7 @@ class RuleRewriter < Ruby2Ruby # :nodoc: all
 
   def initialize(seed, bud_instance)
     @sql_tabs = {}
-    
+
     @bud_instance = bud_instance
     @tables = {}
     @nm = false
@@ -268,7 +268,7 @@ class RuleRewriter < Ruby2Ruby # :nodoc: all
 
     sqlr = SQLRewriter.new(@bud_instance)
     rhs_ast = sqlr.process(rhs_ast)
-    
+
     if @bud_instance.options[:no_attr_rewrite]
       rhs = collect_rhs(rhs_ast)
       rhs_pos = rhs
@@ -285,10 +285,10 @@ class RuleRewriter < Ruby2Ruby # :nodoc: all
     rhs_is_all_sqltables = @tables.reduce(true) { |s, (k,v)| s && @bud_instance.tables[k.to_sym].is_a?(Bud::BudSQLTable) }
     if @bud_instance.tables[lhs.to_sym].is_a?(Bud::BudSQLTable) and sqlr.join_info.valid? and rhs_is_all_sqltables
       @sql_tabs[lhs] ||= []
-      @sql_tabs[lhs] << sqlr.join_info.to_s
+      @sql_tabs[lhs] << sqlr.join_info
       dropRule = true
     end
-    
+
     # Do not record the rule if all collections on rhs are SQLTables
     record_rule(lhs, op, rhs_pos, rhs, ufr.unsafe_func_called) unless dropRule
 
@@ -419,30 +419,57 @@ class SQLRewriter < SexpProcessor
   attr_accessor :join_info
 
   class JoinInfo
-    attr_accessor :tables, :columns, :predicate, :block_aliases, :singleton
+    attr_accessor :tables, :columns, :predicate, :block_aliases, :singleton, :invalid, :operator
     def initialize(bud_instance)
       @tables = []
       @columns = []
       @predicate = ""
       @bud_instance = bud_instance
-      @block_aliases = {}
+      @block_aliases = []
       @singleton = nil
+      @invalid = false
+      @operator = nil
+    end
+
+    def update_operator(op)
+      if @operator.nil?
+        @operator = op
+        return
+      end
+
+      if op == :insert and @operator == :delete
+        @operator = :update
+      elsif op == :delete and @operator == :insert
+        @operator = :update
+      else
+        raise "Error: See operator #{op} when already saw #{@operator}"
+      end
     end
 
     def prependTable(table)
+      @invalid = true unless @bud_instance.tables[table].is_a? Bud::BudSQLTable
+
       # Should not already be here, remove the original columns
       if @tables.include? table
-        @tables.shift
-        @columns = @columns.reject {|c| c =~ /#{table}_view\./}
+        puts "Removing table #{table}: #{@tables} / #{@columns}"
+        @tables.pop
+        @columns = @columns.reject {|c| c =~ /#{table}\./}
         puts "Removed table #{table}: #{@tables} / #{@columns}"
       end
 
       @tables.unshift table
     end
 
+    def named_tables
+      if @block_aliases.size > 0
+        @tables.zip(@block_aliases).map {|t, a| "#{t} #{a}" }
+      else
+        @tables.map {|t| t.to_s}
+      end
+    end
+
     def to_s
-      tableViews = @tables.map{ |t| t.to_s + "_view" }
-      sql = "SELECT #{@columns.uniq.join(",")} FROM #{tableViews.uniq.join(",")}"
+      sql = "SELECT #{@columns.uniq.join(",")} FROM #{named_tables.join(",")}"
       unless @predicate == ""
         sql += " WHERE #{@predicate}"
       end
@@ -451,7 +478,7 @@ class SQLRewriter < SexpProcessor
     end
 
     def valid?
-      @tables.length > 0 and @columns.length > 0
+      not @invalid and @tables.length > 0 and @columns.length > 0
     end
   end
 
@@ -467,6 +494,11 @@ class SQLRewriter < SexpProcessor
   def process_call(exp)
     tag, recv, op, *args = exp
 
+    puts "Call: #{exp}"
+
+    @join_info.update_operator(:insert) if not recv.nil? and op == :+@
+    @join_info.update_operator(:delete) if not recv.nil? and op == :-@
+
     if not recv.nil? and op == :materialize
       if not recv[1].nil?
         raise BudSQLError "Can't currently handle complicated SQL table names (#{recv})"
@@ -480,54 +512,40 @@ class SQLRewriter < SexpProcessor
 
 
     if recv == nil and op.is_a? Symbol and  @join_info.tables.size == 0 # hack!
-      @join_info.tables << op
-      @join_info.columns = Array.new(@bud_instance.tables[op].cols).collect { |c| "#{op.to_s}_view.#{c}"}
+      @join_info.prependTable op
+      @join_info.columns = Array.new(@bud_instance.tables[op].cols).collect { |c| "#{op.to_s}.#{c}"}
     end
 
     if op == :*
-      @join_info.prependTable(args[0][2])  # right
+      @join_info.prependTable(args[0][2]) # right
       @join_info.prependTable(recv[2]) unless recv[2] == :* # left
     end
 
     if op == :pairs
       @join_info.tables.each do |table|
         @bud_instance.tables[table].cols.each do |c|
-          @join_info.columns << "#{table}_view.#{c}"
+          @join_info.columns << "#{table}.#{c}"
         end
       end
     elsif op == :lefts
       table = @join_info.tables[0]
       @bud_instance.tables[table].cols.each do |c|
-        @join_info.columns << "#{table}_view.#{c}"
+        @join_info.columns << "#{table}.#{c}"
       end
     elsif op == :rights
       table = @join_info.tables[1]
       @bud_instance.tables[table].cols.each do |c|
-        @join_info.columns << "#{table}_view.#{c}"
+        @join_info.columns << "#{table}.#{c}"
       end
     end
 
-    return ret 
+    return ret
   end
 
   def process_iter(exp)
     tag, recv, iter_args, body = exp
-    
+
     ret = s(tag, process(recv), process(iter_args), push_and_process(body))
-
-    numSqlTables = 0
-    @join_info.tables.each do |t|
-      if @bud_instance.tables[t].is_a? Bud::BudSQLTable
-        numSqlTables += 1
-      end
-    end
-
-    if numSqlTables == 0
-      @join_info.tables = []
-      @join_info.columns = []
-    elsif numSqlTables != @join_info.tables.size
-      raise BudSQLError "Cannot mix sqltables and other collections on RHS"
-    end
 
     return ret
   end
@@ -537,8 +555,8 @@ class SQLRewriter < SexpProcessor
 
     ret = s(tag, *args)
 
-    (0..args.size-1).each do |i|
-      @join_info.block_aliases[args[i].to_s] = @join_info.tables[i]
+    if @join_info.valid?
+      @join_info.block_aliases = args.dup
     end
 
     return ret
@@ -546,37 +564,44 @@ class SQLRewriter < SexpProcessor
 
   def process_if(exp)
     tag, pred, blk, nothing = exp
-#    ret = 
 
-    parser = RubyParser.new
-    r2r = Ruby2Ruby.new
-    sql_pred = r2r.process(pred)
-    pred = parser.process(sql_pred)
-    sql_pred.gsub!("==", "=")
-    sql_pred.gsub!('"', "'")
+    if @join_info.valid?
+      parser = RubyParser.new
+      r2r = Ruby2Ruby.new
+      sql_pred = r2r.process(pred)
+      pred = parser.process(sql_pred)
+      sql_pred.gsub!("==", "=")
+      sql_pred.gsub!('"', "'")
 
-    @join_info.block_aliases.each do |balias, table|
-      sql_pred.gsub!("#{balias}.", "#{table}_view.")
+      # @join_info.block_aliases.each do |balias, table|
+        # sql_pred.gsub!("#{balias}.", "#{table}.")
+      # end
     end
 
-    @join_info.predicate = sql_pred
-    
+      @join_info.predicate = sql_pred
+
     return s(tag, process(pred), process(blk), nothing)
   end
 
   def process_array(exp)
     tag, *args = exp
+    parser = RubyParser.new
+    r2r = Ruby2Ruby.new
 
-    if (@join_info.tables.size > 0)
-      @join_info.columns = []
-      args.each do |arg|
-        tab = @join_info.block_aliases[arg[1][1].to_s]
-        col = arg[2]
-        @join_info.columns << "#{tab}_view.#{col}"
+    if @join_info.valid?
+      if (@join_info.tables.size > 0)
+        @join_info.columns = []
+        new_args = []
+        args.each do |arg|
+          sql_arg = r2r.process(arg)
+          new_args << parser.process(sql_arg)
+          puts "ARG: #{sql_arg}"
+          @join_info.columns << sql_arg
+        end
       end
     end
 
-    return s(tag, *(args.map{|a| process(a)}))
+    return s(tag, *(new_args.map{|a| process(a)}))
   end
 
   def push_and_process(exp)

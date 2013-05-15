@@ -163,6 +163,7 @@ module Bud
     # Connect to databse (currently postgres)
     if @options[:pg_host] && @options[:pg_dbname]
       @pg_connection = PG.connect( :host => @options[:pg_host], :dbname => @options[:pg_dbname] )
+      @pg_connection.exec(@options[:pg_sql]) if @options[:pg_sql]
       init_sql_tables
     end
 
@@ -183,6 +184,12 @@ module Bud
   end
 
   def init_sql_tables
+    # Drop all triggers from previous runs!
+    # TODO: In a real setting, this is a terrible idea, since it would drop
+    #       the user's real stuff too...
+    self.pg_connection.exec("DROP EXTENSION IF EXISTS plpgsql CASCADE")
+    self.pg_connection.exec("CREATE EXTENSION plpgsql")
+
     @tables.select{|k,v| v if v.is_a? Bud::BudSQLTable}.each do |k,v|
       sql_schema = v.schema.collect do |s|
         type = s[0]

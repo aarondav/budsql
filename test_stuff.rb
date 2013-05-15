@@ -17,8 +17,10 @@ class HelloWorld
   end
 end
 
-t =  HelloWorld.new(:dump_rewrite => true, :pg_host => "localhost", :pg_dbname => "postgres")
-
+t =  HelloWorld.new(:dump_rewrite => true, :pg_host => "localhost", :pg_dbname => "postgres",
+                    :pg_sql => %Q{TRUNCATE names; TRUNCATE colors;})
 t.tick
+t.tick
+t.peeps <+ [['yolanda', 11, 'yellow']]
 t.tick
 t.tick
