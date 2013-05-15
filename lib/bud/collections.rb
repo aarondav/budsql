@@ -1275,7 +1275,7 @@ module Bud
       update_infos.each do |j|
         base_predicate = (j.predicate == "" ? "1=1" : j.predicate)
         key_predicate = key_cols.size.times.map { |i| "(#{@tabname}.#{key_cols[i]} = #{j.columns[i]})" }
-        predicate = "#{base_predicate} AND #{key_predicate.join(' AND ')}" unless key_cols.size == 0
+        predicate = (key_cols.empty? ? base_predicate : "#{base_predicate} AND #{key_predicate.join(' AND ')}")
 
         set_exp = val_cols.size.times.map { |i| "#{val_cols()[i]} = #{j.columns[i+key_cols.size]}" }
 
@@ -1312,7 +1312,7 @@ module Bud
           trig_name = "#{@tabname}_ins_#{tname}"
 
           key_predicate = t.key_cols.map { |c| "(NEW.#{c} = #{tname}.#{c})" }.join(" AND ")
-          predicate = key_predicate + " AND " + base_predicate
+          predicate = (t.key_cols.empty? ? base_predicate : (key_predicate + " AND " + base_predicate))
 
           # Construct insert-update trigger for each table we need to listen to
           pg_exec(%Q{CREATE OR REPLACE FUNCTION #{trig_name}() RETURNS trigger AS $#{trig_name}$
@@ -1402,7 +1402,7 @@ module Bud
       do_update() # TODO: Right location?
 
       if @materialized
-        @storage.clear
+        # TODO: Make sure we recognize when things are deleted and don't re-add them...
         bud_instance.pg_connection.exec("SELECT * FROM #{@tabname}") do |results|
           results.each do |row|
             vals = []
