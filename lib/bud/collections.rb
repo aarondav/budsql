@@ -1268,7 +1268,6 @@ module Bud
     end
 
     def do_update()
-      puts "UPDATE!!!"
       # Need: join tables (nodes, edges)               [j.tables]
       #       predicates (n1.name = edges.f)           [j.predicate]
       #       key equivalences (nodes.name=edges.t)    [j.columns]
@@ -1330,11 +1329,6 @@ module Bud
                     })
         end
       end
-#      pg.exec("CREATE OR REPLACE FUNCTION #{")
-#      delete_view
-#      states.unshift "(SELECT * FROM #{@tabname})"
-#      puts "CREATE VIEW #{@tabname}_view AS #{states.join(" UNION ")}"
-#      @bud_instance.pg_connection.exec("CREATE VIEW #{@tabname}_view AS #{states.join(" UNION ")}")
     end
 
     def materialize
@@ -1375,38 +1369,6 @@ module Bud
     end
     superator "<-" do |o|
       pending_delete(o)
-    end
-
-    public
-    def pending_update(o)
-      if o.class <= Bud::PushElement
-        add_merge_target
-        o.wire_to(self, :update)
-      elsif o.class <= Bud::BudCollection
-        add_merge_target
-        o.pro.wire_to(self, :update)
-      elsif o.class <= Proc
-        add_merge_target
-        tbl = register_coll_expr(o)
-        tbl.pro.wire_to(self, :update)
-      elsif o.class <= Bud::LatticePushElement
-        add_merge_target
-        o.wire_to(self, :update)
-      elsif o.class <= Bud::LatticeWrapper
-        add_merge_target
-        o.to_push_elem.wire_to(self, :update)
-      else
-        unless o.nil?
-          o = o.uniq.compact if o.respond_to?(:uniq)
-          check_enumerable(o)
-          establish_schema(o) if @cols.nil?
-          o.each{|i| @to_update << prep_tuple(i)}
-        end
-      end
-    end
-    public
-    superator "<+-" do |o|
-      pending_update(o)
     end
 
     def *(collection)
